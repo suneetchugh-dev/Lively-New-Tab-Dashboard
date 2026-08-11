@@ -6,6 +6,11 @@ const GITHUB_WEB = "https://github.com";
 export const extractUsername = (input) => {
   const raw = String(input ?? "").trim().replace(/^@+/, "");
   if (!raw) return "";
+  const usernameRe = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
+
+  if (!/github\.com/i.test(raw) && !raw.includes("/")) {
+    return usernameRe.test(raw) ? raw : "";
+  }
 
   const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 
@@ -13,9 +18,9 @@ export const extractUsername = (input) => {
     const url = new URL(withProto);
     if (!/^(www\.)?github\.com$/i.test(url.hostname)) return "";
     const username = (url.pathname.split("/").filter(Boolean)[0] || "").trim();
-    return /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i.test(username) ? username : "";
+    return usernameRe.test(username) ? username : "";
   } catch {
-    return /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i.test(raw) ? raw : "";
+    return usernameRe.test(raw) ? raw : "";
   }
 };
 
