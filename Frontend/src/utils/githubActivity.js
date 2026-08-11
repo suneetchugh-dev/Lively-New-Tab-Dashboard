@@ -7,10 +7,7 @@ export const extractUsername = (input) => {
   const raw = String(input ?? "").trim().replace(/^@+/, "");
   if (!raw) return "";
   const usernameRe = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
-
-  if (!/github\.com/i.test(raw) && !raw.includes("/")) {
-    return usernameRe.test(raw) ? raw : "";
-  }
+  if (usernameRe.test(raw)) return raw;
 
   const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 
