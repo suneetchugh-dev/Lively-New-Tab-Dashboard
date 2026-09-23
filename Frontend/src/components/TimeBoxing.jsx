@@ -105,27 +105,14 @@ const getNowMinutes = () => {
 };
 
 /* ─── Main Task Alert Sounds (mirrors SettingsPage ringtone helpers) ─── */
-const playAlertBeep = () => {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.5);
-  } catch {
-    /* silent fail */
-  }
-};
+const DEFAULT_CHIME = "/sounds/timebox-chime.mp3";
 
 const playAlertSound = (ringtone) => {
   if (!ringtone || ringtone === "beep") {
-    playAlertBeep();
+    // Default: a soft bell chime (bundled locally) rather than a harsh beep.
+    const audio = new Audio(DEFAULT_CHIME);
+    audio.volume = 0.7;
+    audio.play().catch(() => {});
     return;
   }
   try {
@@ -150,9 +137,9 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
   const [newSubtaskText, setNewSubtaskText] = useState("");
   const [editingGroup, setEditingGroup] = useState(null);
   const [editGroupTitle, setEditGroupTitle] = useState("");
-  const [iconPickerGroupId, setIconPickerGroupId] = useState(null);
+  const [iconPickerGroupId] = useState(null);
   const [timePickerGroupId, setTimePickerGroupId] = useState(null);
-  const [atBottom, setAtBottom] = useState(true);
+  const [, setAtBottom] = useState(true);
   const [nowMinutes, setNowMinutes] = useState(getNowMinutes);
 
   // New main task draft (editing phase)
@@ -167,6 +154,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
   const draftSubtaskInputRef = useRef(null);
   const draftIconTriggerRef = useRef(null);
   const draftTimeTriggerRef = useRef(null);
+  const timeTriggerRef = useRef(null);
 
   const updateAtBottom = () => {
     const element = containerRef.current;
@@ -194,18 +182,41 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     return DEFAULT_TASK_GROUPS;
   }, [externalGroups]);
 
+  // Safety net: if an HTML5 drag gets interrupted (window blur, Escape,
+  // element removed from DOM mid-drag, etc.) the drag states can get stuck
+  // non-null, permanently greying out the dragged item and blocking future
+  // drag-over highlights. Reset any stale drag state on window blur/focus
+  // and on any global dragend (fires reliably even when a drag is cancelled,
+  // including drops outside the window).
+  useEffect(() => {
+    const resetStaleDrag = () => {
+      setDraggedGroup(null);
+      setDragOverGroup(null);
+      setDraggedSubtask(null);
+      setDragOverSubtask(null);
+    };
+    window.addEventListener("blur", resetStaleDrag);
+    window.addEventListener("focus", resetStaleDrag);
+    window.addEventListener("dragend", resetStaleDrag);
+    return () => {
+      window.removeEventListener("blur", resetStaleDrag);
+      window.removeEventListener("focus", resetStaleDrag);
+      window.removeEventListener("dragend", resetStaleDrag);
+    };
+  }, []);
+
   useEffect(() => {
     const id = setInterval(() => setNowMinutes(getNowMinutes()), 10000);
     return () => clearInterval(id);
   }, []);
 
-  // Play an audio alert when a main task's assigned time arrives (once per task per day).
-  // Tasks already past their start time on mount / day change are marked silently
-  // so the dashboard doesn't beep for old tasks on load.
-  // Only runs after real externalGroups are received (not on initial default fallback).
-  // Persisted to storage so beeps don't replay on page reload.
+  // Play a chime when a main task's assigned time arrives (once per task per day).
+  // Tasks already past their start time when the widget first arms are marked
+  // silently so the dashboard never chimes for old tasks on load, reload or
+  // refresh. Persisted per-day to storage so chimes don't replay on page reload.
   const alertedRef = useRef({ date: null, ids: new Set() });
   const alertedHydratedRef = useRef(false);
+  const alertedInitializedRef = useRef(false);
 
   // Hydrate alerted state from storage on mount
   useEffect(() => {
@@ -222,20 +233,34 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   useEffect(() => {
     // Wait for real externalGroups (from storage) to arrive before arming alerts.
-    // This prevents beeping on first mount with default fallback groups.
+    // This prevents chimes on first mount with default fallback groups.
     if (!Array.isArray(externalGroups) || externalGroups.length === 0) return;
     // Wait for hydration from storage before running alert logic
     if (!alertedHydratedRef.current) return;
 
     const today = getTodayKey();
+    const now = getNowMinutes();
 
+    // New day while the tab stays open: reset per-day state.
     if (alertedRef.current.date !== today) {
       alertedRef.current = { date: today, ids: new Set() };
+      storageSet(ALERTED_STORAGE_KEY, { date: today, ids: [] });
+      alertedInitializedRef.current = false;
+    }
+
+    // First arm of the day: silently mark every task that is already at/past
+    // its start time so none of them chime retroactively (covers first ever
+    // load, reloads, refreshes, and mid-day storage clears).
+    if (!alertedInitializedRef.current) {
       for (const g of groups || []) {
         const start = parseTimeToMinutes(g.time);
-        if (start !== null && start <= getNowMinutes()) alertedRef.current.ids.add(g.id);
+        if (start !== null && start <= now) alertedRef.current.ids.add(g.id);
       }
-      storageSet(ALERTED_STORAGE_KEY, { date: today, ids: [...alertedRef.current.ids] });
+      storageSet(ALERTED_STORAGE_KEY, {
+        date: today,
+        ids: [...alertedRef.current.ids],
+      });
+      alertedInitializedRef.current = true;
       return;
     }
 
@@ -245,14 +270,17 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     for (const g of groups || []) {
       const start = parseTimeToMinutes(g.time);
       if (start === null || alertedRef.current.ids.has(g.id)) continue;
-      if (start <= nowMinutes) {
+      if (start <= now) {
         alertedRef.current.ids.add(g.id);
         changed = true;
         playAlertSound(ringtone);
       }
     }
     if (changed) {
-      storageSet(ALERTED_STORAGE_KEY, { date: today, ids: [...alertedRef.current.ids] });
+      storageSet(ALERTED_STORAGE_KEY, {
+        date: today,
+        ids: [...alertedRef.current.ids],
+      });
     }
   }, [nowMinutes, groups, notifEnabled, ringtone, externalGroups]);
 
@@ -289,9 +317,9 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   // Default to expanding the current active task relevant to time
   useEffect(() => {
-    if (activeId) {
-      setExpandedId(activeId);
-    }
+    if (!activeId) return;
+    const frameId = requestAnimationFrame(() => setExpandedId(activeId));
+    return () => cancelAnimationFrame(frameId);
   }, [activeId]);
 
   // Auto-scroll active task to center on page load / refresh or activeId change
@@ -437,6 +465,14 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     setEditGroupTitle("");
   };
 
+  const updateGroupTime = (groupId, newTime) => {
+    if (!newTime) return;
+    onGroupsChange?.(
+      groups.map((g) => (g.id === groupId ? { ...g, time: newTime } : g)),
+    );
+    setTimePickerGroupId(null);
+  };
+
   const handleSubtaskDragStart = (event, groupId, subtaskId) => {
     event.stopPropagation();
     setDraggedSubtask({ groupId, subtaskId });
@@ -464,11 +500,19 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     setDragOverSubtask(null);
   };
 
+  const handleSubtaskDragCancel = () => {
+    setDraggedSubtask(null);
+    setDragOverSubtask(null);
+  };
+
   const reorderGroups = (fromIndex, toIndex) => {
     if (fromIndex === toIndex) return;
     const next = [...groups];
-    const [moved] = next.splice(fromIndex, 1);
-    next.splice(toIndex, 0, moved);
+    const fromTime = next[fromIndex]?.time;
+    const toTime = next[toIndex]?.time;
+    const tempMarker = next[fromIndex];
+    next[fromIndex] = { ...next[toIndex], time: fromTime };
+    next[toIndex] = { ...tempMarker, time: toTime };
     onGroupsChange?.(next);
   };
 
@@ -494,6 +538,11 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
   };
 
   const handleGroupDragEnd = () => {
+    setDraggedGroup(null);
+    setDragOverGroup(null);
+  };
+
+  const handleGroupDragCancel = () => {
     setDraggedGroup(null);
     setDragOverGroup(null);
   };
@@ -614,7 +663,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
           }
         }}
         className="w-full flex-1 min-h-0 overflow-y-auto scrollbar-hide z-10 relative pr-0.5"
-        style={(timePickerGroupId || iconPickerGroupId) ? { overflow: "hidden" } : undefined}
+        style={(timePickerGroupId || iconPickerGroupId) ? { overflow: "visible" } : undefined}
       >
         <div className="flex flex-col">
           {groups.map((group, index) => {
@@ -639,6 +688,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
                 onDragOver={(event) => handleGroupDragOver(event, index)}
                 onDrop={(event) => handleGroupDrop(event, index)}
                 onDragEnd={handleGroupDragEnd}
+                onDragCancel={handleGroupDragCancel}
                 className={`flex items-stretch ${
                   draggedGroup === index ? "opacity-40" : ""
                 } ${
@@ -810,6 +860,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
                                   handleSubtaskDrop(event, group.id, subtask.id)
                                 }
                                 onDragEnd={handleSubtaskDragEnd}
+                                onDragCancel={handleSubtaskDragCancel}
                                 className={`group/subtask relative flex items-center gap-2.5 py-[5px] pl-7 rounded-lg transition-all ${
                                   dragOverSubtask?.groupId === group.id &&
                                   dragOverSubtask?.subtaskId === subtask.id
@@ -956,13 +1007,34 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
                         : undefined,
                     }}
                   />
-                  <span
-                    className={`absolute left-[16px] top-[2px] text-[10px] leading-[14px] font-gilroy-medium whitespace-nowrap transition-colors ${
+                  <button
+                    type="button"
+                    ref={(el) => {
+                      if (timePickerGroupId === group.id) {
+                        timeTriggerRef.current = el;
+                      }
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setTimePickerGroupId((prev) =>
+                        prev === group.id ? null : group.id,
+                      );
+                    }}
+                    title="Click to edit start time"
+                    className={`absolute left-[16px] top-[2px] text-[10px] leading-[14px] font-gilroy-medium whitespace-nowrap transition-colors cursor-pointer ${
                       active ? "text-white font-gilroy-bold" : "text-white/55"
-                    }`}
+                    } hover:text-white`}
                   >
                     {group.time}
-                  </span>
+                  </button>
+                  {timePickerGroupId === group.id && (
+                    <TimeDropdownPopover
+                      triggerRef={timeTriggerRef}
+                      current={group.time}
+                      onSelect={(newTime) => updateGroupTime(group.id, newTime)}
+                      onClose={() => setTimePickerGroupId(null)}
+                    />
+                  )}
                 </div>
               </div>
             );

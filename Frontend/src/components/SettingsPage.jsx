@@ -15,6 +15,8 @@ import { IconDropdownPopover } from "./IconPicker.jsx";
 import { TimeDropdownPopover } from "./TimePicker.jsx";
 
 /* ─── Ringtone helpers ─── */
+const RINGTONE_CHIME = "/sounds/timebox-chime.mp3";
+
 const playBeep = () => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -46,6 +48,8 @@ const playCustomRingtone = (dataUrl) => {
 const previewRingtone = (ringtone) => {
   if (!ringtone || ringtone === "beep") {
     playBeep();
+  } else if (ringtone === RINGTONE_CHIME) {
+    playCustomRingtone(RINGTONE_CHIME);
   } else {
     playCustomRingtone(ringtone);
   }
@@ -154,7 +158,7 @@ const CardContainer = ({ title, description, children, action, overflowVisible =
 /* ─── Ringtone Selector Component ─── */
 const RingtoneRow = ({ label, value, onChange }) => {
   const fileRef = useRef(null);
-  const hasCustom = value && value !== "beep";
+  const hasCustom = value && value !== "beep" && value !== RINGTONE_CHIME;
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -171,6 +175,9 @@ const RingtoneRow = ({ label, value, onChange }) => {
       <div className="flex items-center gap-2">
         <Pill active={!value || value === "beep"} onClick={() => onChange("beep")}>
           Default Beep
+        </Pill>
+        <Pill active={value === RINGTONE_CHIME} onClick={() => onChange(RINGTONE_CHIME)}>
+          Chime
         </Pill>
         <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={handleFile} />
         <Pill active={hasCustom} onClick={() => fileRef.current?.click()}>
@@ -1895,6 +1902,23 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
 
   const anyPickerOpen = timePickerGroupId !== null || iconPickerGroupId !== null;
 
+  useEffect(() => {
+    const resetStaleDrag = () => {
+      setDraggedIdx(null);
+      setDragOverIdx(null);
+      setDraggedSubtask(null);
+      setDragOverSubtask(null);
+    };
+    const onWindowBlur = () => resetStaleDrag();
+    const onWindowFocus = () => resetStaleDrag();
+    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, []);
+
   const addGroup = () => {
     const g = { id: makeId(), title: "New Routine", iconClass: "ri-briefcase-line", time: "9:00 am", streak: 0, subtasks: [] };
     onTimeBoxingGroupsChange([...timeBoxingGroups, g]);
@@ -1922,8 +1946,11 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
     e.preventDefault();
     if (draggedIdx !== null && draggedIdx !== targetIdx) {
       const reordered = [...timeBoxingGroups];
-      const [movedItem] = reordered.splice(draggedIdx, 1);
-      reordered.splice(targetIdx, 0, movedItem);
+      const fromTime = reordered[draggedIdx]?.time;
+      const toTime = reordered[targetIdx]?.time;
+      const tempMarker = reordered[draggedIdx];
+      reordered[draggedIdx] = { ...reordered[targetIdx], time: fromTime };
+      reordered[targetIdx] = { ...tempMarker, time: toTime };
       onTimeBoxingGroupsChange(reordered);
     }
     setDraggedIdx(null);
@@ -1931,6 +1958,11 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
   };
 
   const handleDragEnd = () => {
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+  };
+
+  const handleDragCancel = () => {
     setDraggedIdx(null);
     setDragOverIdx(null);
   };
@@ -1996,6 +2028,11 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
     setDragOverSubtask(null);
   };
 
+  const handleSubtaskDragCancel = () => {
+    setDraggedSubtask(null);
+    setDragOverSubtask(null);
+  };
+
   return (
     <CardContainer
       overflowVisible={anyPickerOpen}
@@ -2016,6 +2053,7 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
                 onDragOver={(e) => handleDragOver(e, idx)}
                 onDrop={(e) => handleDrop(e, idx)}
                 onDragEnd={handleDragEnd}
+                onDragCancel={handleDragCancel}
                 className={`bg-black/25 border rounded-2xl transition-all shadow-sm relative ${
                   (timePickerGroupId === group.id || iconPickerGroupId === group.id) ? "z-30 overflow-visible" : "z-10 overflow-hidden"
                 } ${
@@ -2153,6 +2191,7 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
                             handleSubtaskDrop(e, group.id, stIdx)
                           }
                           onDragEnd={handleSubtaskDragEnd}
+                          onDragCancel={handleSubtaskDragCancel}
                           className={`flex items-center gap-2.5 rounded-xl transition-all ${
                             stDragging
                               ? "opacity-40"
