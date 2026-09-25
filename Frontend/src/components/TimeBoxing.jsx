@@ -176,7 +176,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   // Use externalGroups when provided (always the case from DashboardGrid)
   const groups = useMemo(() => {
-    if (Array.isArray(externalGroups) && externalGroups.length > 0) {
+    if (Array.isArray(externalGroups)) {
       return externalGroups;
     }
     return DEFAULT_TASK_GROUPS;
@@ -391,6 +391,27 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     ).length;
 
     updateTodayCompletedTasksCount(completedMainCount);
+  };
+
+  const removeGroup = (groupId) => {
+    const nextGroups = groups.filter((g) => g.id !== groupId);
+
+    if (typeof onGroupsChange === "function") {
+      onGroupsChange(nextGroups);
+    }
+
+    const completedMainCount = nextGroups.filter(
+      (g) => g.subtasks && g.subtasks.length > 0 && g.subtasks.every((s) => s.done),
+    ).length;
+
+    updateTodayCompletedTasksCount(completedMainCount);
+    if (editingGroup === groupId) {
+      setEditingGroup(null);
+      setEditGroupTitle("");
+    }
+    if (expandedId === groupId) {
+      setExpandedId(null);
+    }
   };
 
   const reorderSubtask = (groupId, fromId, toId) => {
@@ -761,7 +782,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
                               event.stopPropagation();
                               if (expanded) startEditGroup(group);
                             }}
-                            className={`font-gilroy-bold text-[15px] truncate cursor-text ${
+                            className={`min-w-0 flex-1 font-gilroy-bold text-[15px] truncate cursor-text ${
                               active
                                 ? "text-[color:var(--theme-4,#0F172A)]"
                                 : "text-white"
@@ -770,6 +791,28 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
                           >
                             {group.title}
                           </h3>
+                        )}
+                        {expanded && (
+                          <button
+                            type="button"
+                            draggable={false}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              removeGroup(group.id);
+                            }}
+                            aria-label={`Delete ${group.title || "main task"}`}
+                            title="Delete main task"
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-all duration-200 active:scale-95 cursor-pointer ${
+                              active
+                                ? "text-[color:var(--theme-4,#0F172A)] opacity-80 hover:bg-black/10 hover:opacity-100"
+                                : "text-white/60 opacity-70 hover:bg-red-500/20 hover:text-red-300 hover:opacity-100"
+                            }`}
+                          >
+                            <i
+                              className="ri-delete-bin-6-line text-sm"
+                              style={active ? { color: "var(--theme-4, #0F172A)" } : undefined}
+                            />
+                          </button>
                         )}
                       </div>
 
@@ -944,10 +987,18 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
                                     event.stopPropagation();
                                     removeSubtask(group.id, subtask.id);
                                   }}
-                                  className="opacity-0 group-hover/subtask:opacity-100 text-white/40 hover:text-red-300 cursor-pointer"
+                                  aria-label={`Remove ${subtask.text || "subtask"}`}
+                                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all duration-200 active:scale-95 cursor-pointer ${
+                                    active
+                                      ? "text-[color:var(--theme-4,#0F172A)] opacity-80 hover:bg-black/10 hover:opacity-100"
+                                      : "text-white/60 opacity-70 hover:bg-red-500/20 hover:text-red-300 hover:opacity-100"
+                                  }`}
                                   title="Remove subtask"
                                 >
-                                  <i className="ri-close-line text-sm" />
+                                  <i
+                                    className="ri-close-line text-sm"
+                                    style={active ? { color: "var(--theme-4, #0F172A)" } : undefined}
+                                  />
                                 </button>
                               </div>
                             );

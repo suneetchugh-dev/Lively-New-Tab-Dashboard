@@ -252,7 +252,7 @@ export const TimeDropdownPopover = ({ current, onSelect, onClose, uiTheme = "def
           : "0 10px 40px rgba(0,0,0,0.9), 0 0 20px color-mix(in srgb, var(--theme-1, var(--theme)) 25%, transparent)",
       }}
       className={`absolute right-0 ${
-        openUpwards ? "bottom-full mb-2" : "top-full mt-2"
+        openUpwards ? "bottom-full mb-3" : "top-full mt-2"
       } z-[99999] w-80 rounded-2xl p-5 flex flex-col animate-fade-in border backdrop-blur-2xl select-text ${
         isManga ? "text-black" : "text-white"
       }`}

@@ -406,7 +406,7 @@ const App = () => {
           setSongCustomVideo(DEFAULT_SONG_CUSTOM_VIDEO);
         }
         if (Array.isArray(storedLofiStations) && storedLofiStations.length > 0) setLofiStations(storedLofiStations);
-        if (Array.isArray(storedTimeboxGroups) && storedTimeboxGroups.length > 0) setTimeBoxingGroups(storedTimeboxGroups);
+        if (Array.isArray(storedTimeboxGroups)) setTimeBoxingGroups(storedTimeboxGroups);
         let parsedImpTabs = storedImpTabsCfg;
         if (typeof storedImpTabsCfg === "string") {
           try { parsedImpTabs = JSON.parse(storedImpTabsCfg); } catch { parsedImpTabs = null; }
