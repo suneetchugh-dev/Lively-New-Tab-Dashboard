@@ -13,6 +13,12 @@ import {
 } from "./iconData.js";
 import { IconDropdownPopover } from "./IconPicker.jsx";
 import { TimeDropdownPopover } from "./TimePicker.jsx";
+import {
+  insertGroupByTime,
+  moveItem,
+  setGroupTimeOrdered,
+} from "../utils/timeBoxOrder.js";
+import { useFlipReorder } from "../hooks/useFlipReorder.js";
 
 /* ─── Ringtone helpers ─── */
 const RINGTONE_CHIME = "/sounds/timebox-chime.mp3";
@@ -1902,6 +1908,13 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
 
   const anyPickerOpen = timePickerGroupId !== null || iconPickerGroupId !== null;
 
+  // Set right before a time-driven reorder so the FLIP effect animates it
+  const animateReorderRef = useRef(false);
+  const registerCard = useFlipReorder(
+    (timeBoxingGroups || []).map((g) => g.id).join("|"),
+    animateReorderRef,
+  );
+
   useEffect(() => {
     const resetStaleDrag = () => {
       setDraggedIdx(null);
@@ -1921,14 +1934,23 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
 
   const addGroup = () => {
     const g = { id: makeId(), title: "New Routine", iconClass: "ri-briefcase-line", time: "9:00 am", streak: 0, subtasks: [] };
-    onTimeBoxingGroupsChange([...timeBoxingGroups, g]);
+    animateReorderRef.current = true;
+    onTimeBoxingGroupsChange(insertGroupByTime(timeBoxingGroups, g));
     setExpandedGroupId(g.id);
   };
 
   const removeGroup = (id) => onTimeBoxingGroupsChange(timeBoxingGroups.filter((g) => g.id !== id));
 
-  const updateGroup = (id, patch) =>
+  const updateGroup = (id, patch) => {
+    // A time edit re-inserts the card at its chronological slot; every other
+    // patch is a plain in-place update.
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "time")) {
+      animateReorderRef.current = true;
+      onTimeBoxingGroupsChange(setGroupTimeOrdered(timeBoxingGroups, id, patch.time));
+      return;
+    }
     onTimeBoxingGroupsChange(timeBoxingGroups.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+  };
 
   const handleDragStart = (e, index) => {
     setDraggedIdx(index);
@@ -1945,13 +1967,7 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
   const handleDrop = (e, targetIdx) => {
     e.preventDefault();
     if (draggedIdx !== null && draggedIdx !== targetIdx) {
-      const reordered = [...timeBoxingGroups];
-      const fromTime = reordered[draggedIdx]?.time;
-      const toTime = reordered[targetIdx]?.time;
-      const tempMarker = reordered[draggedIdx];
-      reordered[draggedIdx] = { ...reordered[targetIdx], time: fromTime };
-      reordered[targetIdx] = { ...tempMarker, time: toTime };
-      onTimeBoxingGroupsChange(reordered);
+      onTimeBoxingGroupsChange(moveItem(timeBoxingGroups, draggedIdx, targetIdx));
     }
     setDraggedIdx(null);
     setDragOverIdx(null);
@@ -2037,7 +2053,7 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
     <CardContainer
       overflowVisible={anyPickerOpen}
       title="Time Boxing Routine Editor"
-      description="Structure your daily routines into scheduled task blocks with subtask checklists. Drag task cards up or down to reorder them."
+      description="Structure your daily routines into scheduled task blocks with subtask checklists. Drag task cards to reorder them manually, or change a start time and the card jumps to its chronological slot."
     >
       <div className="flex flex-col gap-4 pt-3 border-t border-white/10">
         <div className="flex flex-col gap-4">
@@ -2048,6 +2064,7 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
             return (
               <div
                 key={group.id}
+                ref={(el) => registerCard(group.id, el)}
                 draggable
                 onDragStart={(e) => handleDragStart(e, idx)}
                 onDragOver={(e) => handleDragOver(e, idx)}
@@ -2069,7 +2086,7 @@ const TimeBoxingTab = ({ timeBoxingGroups, onTimeBoxingGroupsChange, uiTheme = "
                   <div className="flex items-center shrink-0">
                     <div
                       className="h-10 w-7 flex items-center justify-center text-white/40 hover:text-white cursor-grab active:cursor-grabbing transition-colors"
-                      title="Drag to reorder routine tasks"
+                      title="Drag to reorder routine tasks (or edit the time to re-sort)"
                     >
                       <i className="ri-drag-move-fill text-lg" />
                     </div>

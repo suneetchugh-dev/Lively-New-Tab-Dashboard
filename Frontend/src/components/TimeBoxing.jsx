@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { updateTodayCompletedTasksCount } from "../utils/activityStore";
 import { storageGet, storageSet } from "../utils/storage.js";
+import {
+  insertGroupByTime,
+  moveItem,
+  parseTimeToMinutes,
+  setGroupTimeOrdered,
+} from "../utils/timeBoxOrder.js";
+import { useFlipReorder } from "../hooks/useFlipReorder.js";
 import { IconDropdownPopover } from "./IconPicker.jsx";
 import { TimeDropdownPopover } from "./TimePicker.jsx";
 
@@ -85,20 +92,6 @@ const DEFAULT_TASK_GROUPS = [
   },
 ];
 
-const parseTimeToMinutes = (time) => {
-  if (!time) return null;
-  const match = /^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i.exec(String(time).trim());
-  if (!match) return null;
-  let hours = parseInt(match[1], 10);
-  let minutes = match[2] ? parseInt(match[2], 10) : 0;
-  const period = match[3].toLowerCase();
-
-  if (period === "pm" && hours < 12) hours += 12;
-  if (period === "am" && hours === 12) hours = 0;
-
-  return hours * 60 + minutes;
-};
-
 const getNowMinutes = () => {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
@@ -141,6 +134,8 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
   const [timePickerGroupId, setTimePickerGroupId] = useState(null);
   const [, setAtBottom] = useState(true);
   const [nowMinutes, setNowMinutes] = useState(getNowMinutes);
+  // Card to reveal after it moves (time edit / new task), keeps it on screen.
+  const [focusGroupId, setFocusGroupId] = useState(null);
 
   // New main task draft (editing phase)
   const [draftNewTask, setDraftNewTask] = useState(null);
@@ -150,6 +145,9 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   const containerRef = useRef(null);
   const activeTaskRef = useRef(null);
+  const focusTaskRef = useRef(null);
+  // Set right before a time-driven reorder so the FLIP effect animates it.
+  const animateReorderRef = useRef(false);
   const draftTitleInputRef = useRef(null);
   const draftSubtaskInputRef = useRef(null);
   const draftIconTriggerRef = useRef(null);
@@ -181,6 +179,12 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     }
     return DEFAULT_TASK_GROUPS;
   }, [externalGroups]);
+
+  // Subtle slide when a card is re-sorted because its time changed
+  const registerCard = useFlipReorder(
+    groups.map((g) => g.id).join("|"),
+    animateReorderRef,
+  );
 
   // Safety net: if an HTML5 drag gets interrupted (window blur, Escape,
   // element removed from DOM mid-drag, etc.) the drag states can get stuck
@@ -349,6 +353,23 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     return () => clearTimeout(timer);
   }, [activeId]);
 
+  // Reveal a card that just moved (time edit or newly created task)
+  useEffect(() => {
+    if (!focusGroupId) return;
+    const timer = setTimeout(() => {
+      const container = containerRef.current;
+      const target = focusTaskRef.current;
+      if (container && target) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const top = targetRect.top - containerRect.top + container.scrollTop;
+        container.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+      }
+      setFocusGroupId(null);
+    }, 140);
+    return () => clearTimeout(timer);
+  }, [focusGroupId]);
+
   const toggleSubtask = (groupId, subtaskId) => {
     const nextGroups = groups.map((g) =>
       g.id !== groupId
@@ -395,6 +416,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   const removeGroup = (groupId) => {
     const nextGroups = groups.filter((g) => g.id !== groupId);
+    if (focusGroupId === groupId) setFocusGroupId(null);
 
     if (typeof onGroupsChange === "function") {
       onGroupsChange(nextGroups);
@@ -488,9 +510,11 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   const updateGroupTime = (groupId, newTime) => {
     if (!newTime) return;
-    onGroupsChange?.(
-      groups.map((g) => (g.id === groupId ? { ...g, time: newTime } : g)),
-    );
+    // A time edit wins over the manual order: the card jumps to the slot its
+    // new start time belongs to, other cards keep their relative order.
+    onGroupsChange?.(setGroupTimeOrdered(groups, groupId, newTime));
+    animateReorderRef.current = true;
+    setFocusGroupId(groupId);
     setTimePickerGroupId(null);
   };
 
@@ -528,13 +552,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
 
   const reorderGroups = (fromIndex, toIndex) => {
     if (fromIndex === toIndex) return;
-    const next = [...groups];
-    const fromTime = next[fromIndex]?.time;
-    const toTime = next[toIndex]?.time;
-    const tempMarker = next[fromIndex];
-    next[fromIndex] = { ...next[toIndex], time: fromTime };
-    next[toIndex] = { ...tempMarker, time: toTime };
-    onGroupsChange?.(next);
+    onGroupsChange?.(moveItem(groups, fromIndex, toIndex));
   };
 
   const handleGroupDragStart = (event, index) => {
@@ -633,8 +651,9 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
       subtasks: draftNewTask.subtasks || [],
     };
 
-    const nextGroups = [...groups, newGroup];
+    const nextGroups = insertGroupByTime(groups, newGroup);
     if (typeof onGroupsChange === "function") {
+      animateReorderRef.current = true;
       onGroupsChange(nextGroups);
     }
 
@@ -643,6 +662,7 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
     setDraftIconPickerOpen(false);
     setDraftTimePickerOpen(false);
     setExpandedId(newGroup.id);
+    setFocusGroupId(newGroup.id);
   };
 
   return (
@@ -703,7 +723,11 @@ const TimeBoxing = ({ dragHandleProps, externalGroups, onGroupsChange, notifEnab
             return (
               <div
                 key={group.id}
-                ref={active ? activeTaskRef : null}
+                ref={(el) => {
+                  registerCard(group.id, el);
+                  if (active) activeTaskRef.current = el;
+                  if (group.id === focusGroupId) focusTaskRef.current = el;
+                }}
                 draggable
                 onDragStart={(event) => handleGroupDragStart(event, index)}
                 onDragOver={(event) => handleGroupDragOver(event, index)}
